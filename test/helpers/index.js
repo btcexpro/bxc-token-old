@@ -2,20 +2,34 @@ function getDaysInSeconds(days) {
     return 86400 * days;
 }
 
-function calculatePercentBonusByDate(blockTimestamp, startPreSale) {
-    if (blockTimestamp > startPreSale + getDaysInSeconds(15)) {
-        return 0;
-    } else if (blockTimestamp > startPreSale + getDaysInSeconds(12)) {
-        return 2.5;
-    } else if (blockTimestamp > startPreSale + getDaysInSeconds(9)) {
-        return 5;
-    } else if (blockTimestamp > startPreSale + getDaysInSeconds(6)) {
-        return 10;
-    } else if (blockTimestamp > startPreSale + getDaysInSeconds(3)) {
-        return 15;
-    } else {
-        return 20;
+function getPercentBonusForPreSale(usdAmount) {
+    if (usdAmount >= 10000 && usdAmount <= 25000) {
+        return 300;
+    } else if (usdAmount > 25000 && usdAmount <= 50000) {
+        return 350;
+    } else if (usdAmount > 50000) {
+        return 400;
     }
+}
+
+function getPercentBonusForSale(blockTimestamp, startSale) {
+    if (blockTimestamp > startSale + getDaysInSeconds(15)) {
+        return 0;
+    } else if (blockTimestamp > startSale + getDaysInSeconds(12)) {
+        return 25;
+    } else if (blockTimestamp > startSale + getDaysInSeconds(9)) {
+        return 50;
+    } else if (blockTimestamp > startSale + getDaysInSeconds(6)) {
+        return 100;
+    } else if (blockTimestamp > startSale + getDaysInSeconds(3)) {
+        return 150;
+    } else {
+        return 200;
+    }
+}
+
+function calculatePercentBonusByDate(blockTimestamp, startSale, usdAmount) {
+    return blockTimestamp < startSale ? getPercentBonusForPreSale(usdAmount) : getPercentBonusForSale(blockTimestamp, startSale);
 }
 
 function getDiffInDays(endDate) {
@@ -25,11 +39,28 @@ function getDiffInDays(endDate) {
     return Math.ceil(timeDiff / (1000 * 3600 * 24));
 }
 
+function saveSnapshot() {
+    const id = Date.now();
+    return new Promise((resolve, reject) => {
+        web3.currentProvider.sendAsync({
+            jsonrpc: '2.0',
+            method: 'evm_snapshot',
+            id: id,
+        }, (err0, res) => {
+            if (err0) {
+                return reject(err0);
+            }
+            return resolve(res);
+        });
+    });
+}
+
 // Increases testrpc time by the passed duration in seconds
 function increaseTime(duration) {
     const id = Date.now();
 
     return new Promise((resolve, reject) => {
+
         web3.currentProvider.sendAsync({
             jsonrpc: '2.0',
             method: 'evm_increaseTime',
@@ -39,7 +70,29 @@ function increaseTime(duration) {
             if (err1) {
                 return reject(err1);
             }
+            web3.currentProvider.sendAsync({
+                jsonrpc: '2.0',
+                method: 'evm_mine',
+                id: id + 1,
+            }, (err2, res) => {
+                return err2 ? reject(err2) : resolve(res);
+            });
+        });
+    });
+}
 
+function revertTime() {
+    const id = Date.now();
+    return new Promise((resolve, reject) => {
+        web3.currentProvider.sendAsync({
+            jsonrpc: '2.0',
+            method: 'evm_decreaseTime',
+            id: id,
+        }, (err0, res) => {
+            if (err0) {
+                return reject(err0);
+            }
+            // return resolve(res);
             web3.currentProvider.sendAsync({
                 jsonrpc: '2.0',
                 method: 'evm_mine',
@@ -60,9 +113,9 @@ function increaseTime(duration) {
  */
 const increaseTimeTo = (target) => {
     let now = latestTime();
-    if (target < now) {
-        throw Error(`Cannot increase current time(${now}) to a moment in the past(${target})`);
-    }
+    // if (target < now) {
+    //     throw Error(`Cannot increase current time(${now}) to a moment in the past(${target})`);
+    // }
     let diff = target - now;
     return increaseTime(diff);
 };
@@ -100,4 +153,6 @@ module.exports = {
     increaseTime,
     calculatePercentBonusByDate,
     getDaysInSeconds,
+    revertTime,
+    saveSnapshot,
 };

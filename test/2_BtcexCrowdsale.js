@@ -1,13 +1,18 @@
-const BtcexCrowdsale = artifacts.require("./BtcexCrowdsale.sol");
-const BtcexToken = artifacts.require("./BtcexToken.sol");
-const { TOKEN_PRICE, START_PRESALE_TIME, END_TIME } = require('../constants');
+const {
+    START_PRESALE_TIME, END_TIME, START_TIME,
+} = require('../constants');
 const { increaseTimeTo, calculatePercentBonusByDate, getDaysInSeconds } = require('./helpers');
+const deployContracts = require('./helpers/deployContracts');
 const throwAssert = require('./helpers/throwAssert');
-
-
-contract('Crowdsale', function ([deployer, account1]) {
+contract('Crowdsale_failure', function ([deployer, account1, account2, account3, account4, teamWallet, advisorWallet]) {
     let instance;
     let tokenInstance;
+    let tokenPrice;
+    let weiPerCent;
+
+    function weiToUsd(amount) {
+        return amount / weiPerCent / 100;
+    }
 
     function getBuyTransactionParams(weiAmount) {
         return {
@@ -18,35 +23,40 @@ contract('Crowdsale', function ([deployer, account1]) {
         };
     }
 
-    function buyTokensFn(timeToIncrease) {
+    function buyTokensFn(timeToIncrease, weiAmount) {
         return async function () {
-            const startPreSale = await instance.openingTime();
-            const increasedTime = startPreSale.toNumber() + timeToIncrease;
+            const increasedTime = START_PRESALE_TIME + timeToIncrease;
             await increaseTimeTo(increasedTime);
             const tokenBalanceBefore = web3.fromWei(await tokenInstance.balanceOf(account1));
-            const weiAmount = web3.toWei('0.1');
             await instance.buyTokens(account1, getBuyTransactionParams(weiAmount));
             const balance = await tokenInstance.balanceOf(account1);
             const tokenBalance = (web3.fromWei(balance)).toNumber();
-            const tokenAmountByRate = +weiAmount * TOKEN_PRICE;
-            const tokenBonus = tokenAmountByRate * calculatePercentBonusByDate(increasedTime, startPreSale.toNumber()) / 100;
-            const expectedBalanceWithBonus = tokenAmountByRate + tokenBonus;
-            assert.equal(tokenBalance, tokenBalanceBefore.toNumber() + parseFloat(web3.fromWei(expectedBalanceWithBonus)), 'Incorrect balance after buy tokens');
+            const tokenAmountByRate = (web3.toWei(web3.toBigNumber(parseInt(weiAmount / tokenPrice), 10))).toNumber();
+            const tokenBonus = (web3.toBigNumber(tokenAmountByRate * calculatePercentBonusByDate(increasedTime, START_TIME, weiToUsd(weiAmount)) / 1000)).toNumber();
+            const expectedBalanceWithBonus = web3.toBigNumber(tokenAmountByRate + tokenBonus);
+            assert.equal(Math.round(tokenBalance * 100) / 100, Math.round((tokenBalanceBefore.toNumber() + (web3.fromWei(expectedBalanceWithBonus)).toNumber()) * 100) / 100, 'Incorrect balance after buy tokens');
         };
     }
 
     before(async () => {
-        instance = await BtcexCrowdsale.deployed();
-        tokenInstance = await BtcexToken.deployed();
+        const deployedContracts = await deployContracts(deployer, teamWallet, advisorWallet);
+        weiPerCent = deployedContracts.weiPerCent;
+        tokenPrice = deployedContracts.tokenPrice;
+        tokenInstance = deployedContracts.tokenInstance;
+        instance = deployedContracts.instance;
     });
+
+
     it('should create Crowdsale contract with correct parameters', async () => {
+
+        console.log('================================')
         const startPreSale = await instance.openingTime();
         const endSale = await instance.closingTime();
         assert.equal(startPreSale.toNumber(), START_PRESALE_TIME, 'start presale incorrect');
         assert.equal(endSale.toNumber(), END_TIME, 'end sale incorrect');
     });
     it('should transfer ownership of token to Crowdsale contract', async () => {
-        await tokenInstance.transferOwnership(instance.address, { from: deployer });
+        await tokenInstance.transferOwnershipAndTotalBalance(instance.address, { from: deployer });
         const newOwner = await tokenInstance.owner();
         assert.equal(newOwner, instance.address, 'Invalid owner');
     });
@@ -58,12 +68,19 @@ contract('Crowdsale', function ([deployer, account1]) {
         const weiAmount = web3.toWei('1');
         await throwAssert(() => instance.buyTokens(account1, getBuyTransactionParams(weiAmount)));
     });
-    it('should buy tokens from buy tokens method with 20 percent bonus', buyTokensFn(1));
-    it('should buy tokens by send ether to directly to crowdsale address with 15 percent bonus', buyTokensFn(getDaysInSeconds(3) + 1));
-    it('should buy tokens with 10 percent bonus', buyTokensFn(getDaysInSeconds(6) + 1));
-    it('should buy tokens with 5 percent bonus', buyTokensFn(getDaysInSeconds(9) + 1));
-    it('should buy tokens with 2.5 percent bonus', buyTokensFn(getDaysInSeconds(12) + 1));
-    it('should buy tokens with 0 percent bonus', buyTokensFn(getDaysInSeconds(15) + 1));
+    it('should buy tokens on presale with 30% bonus', buyTokensFn(1, web3.toWei('50')));
+    it('should not allow to buy tokens for presale less then 10000$', async () => {
+        await throwAssert(() => instance.buyTokens(account1, getBuyTransactionParams(web3.toWei('10'))));
+    });
+    it('should not allow to buy tokens for presale less then 100000$', async () => {
+        await throwAssert(() => instance.buyTokens(account1, getBuyTransactionParams(web3.toWei('500'))));
+    });
+    it('should buy tokens from buy tokens method with 20 percent bonus', buyTokensFn(getDaysInSeconds(15 + 1), web3.toWei('1')));
+    it('should buy tokens by send ether to directly to crowdsale address with 15 percent bonus', buyTokensFn(getDaysInSeconds(18 + 1), web3.toWei('1')));
+    it('should buy tokens with 10 percent bonus', buyTokensFn(getDaysInSeconds(21 + 1), web3.toWei('1')));
+    it('should buy tokens with 5 percent bonus', buyTokensFn(getDaysInSeconds(24 + 1), web3.toWei('1')));
+    it('should buy tokens with 2.5 percent bonus', buyTokensFn(getDaysInSeconds(27 + 1), web3.toWei('1')));
+    it('should buy tokens with 0 percent bonus', buyTokensFn(getDaysInSeconds(30 + 1), web3.toWei('1')));
     it('should not allow to send less then min transaction', async () => {
         const weiAmount = web3.toWei('0.01');
         await throwAssert(() => web3.eth.sendTransaction(getBuyTransactionParams(weiAmount)));
@@ -86,7 +103,7 @@ contract('Crowdsale', function ([deployer, account1]) {
     it('should allow owner to finalize after closing time', async () => {
         const isFinalizedBefore = await instance.isFinalized();
         assert.isFalse(isFinalizedBefore);
-        await instance.finalize({ from: deployer });
+        const tx = await instance.finalize({ from: deployer });
         const isFinalizedAfter = await instance.isFinalized();
         assert.isTrue(isFinalizedAfter, 'Was not finalized');
     });
